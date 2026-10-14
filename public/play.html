@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+  <title>GB STUDY - Video Lecture Player</title>
+  <link rel="icon" type="image/png" href="/logo.png">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      background: #000;
+      color: #fff;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+    }
+    .video-container {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    video, iframe {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #000;
+      outline: none;
+    }
+    .controls-overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      z-index: 40;
+      transition: opacity 0.3s ease;
+      pointer-events: none;
+    }
+    .controls-overlay.hide { opacity: 0; }
+    .top-bar {
+      background: linear-gradient(to bottom, rgba(0,0,0,0.9), transparent);
+      padding: 16px 20px 36px;
+      pointer-events: auto;
+    }
+    .bottom-bar {
+      background: linear-gradient(to top, rgba(0,0,0,0.95), rgba(0,0,0,0.6), transparent);
+      padding: 36px 20px 16px;
+      pointer-events: auto;
+    }
+    input[type=range] {
+      -webkit-appearance: none;
+      width: 100%;
+      background: rgba(255,255,255,0.2);
+      cursor: pointer;
+      height: 6px;
+      border-radius: 3px;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      height: 14px;
+      width: 14px;
+      border-radius: 50%;
+      background: #ec4899;
+      box-shadow: 0 0 10px rgba(236,72,153,0.8);
+    }
+    .popup-menu {
+      display: none;
+      position: absolute;
+      background: rgba(18, 18, 20, 0.96);
+      backdrop-filter: blur(16px);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 12px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.8);
+      z-index: 50;
+      flex-direction: column;
+    }
+    .popup-menu.show { display: flex; }
+  </style>
+</head>
+<body>
+  <!-- Loader -->
+  <div id="loader" class="absolute inset-0 flex flex-col items-center justify-center z-50 bg-black">
+    <div class="w-12 h-12 border-4 border-pink-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+    <div class="flex items-center gap-2 mb-1">
+      <img src="/logo.png" alt="GB STUDY" class="w-6 h-6 rounded-md">
+      <span class="font-bold text-white text-base tracking-wide">GB STUDY</span>
+    </div>
+    <p class="text-zinc-400 text-xs">Loading authentic lecture video...</p>
+  </div>
+
+  <!-- Error screen -->
+  <div id="error-screen" class="absolute inset-0 hidden flex-col items-center justify-center z-50 bg-black/95 p-4 text-center">
+    <i data-lucide="alert-circle" class="w-12 h-12 text-pink-500 mb-3"></i>
+    <p class="text-white font-bold text-base mb-1" id="error-title">Video Stream Unavailable</p>
+    <p class="text-zinc-400 text-xs max-w-md mb-4" id="error-desc">Could not connect to the video server. Click retry to reconnect.</p>
+    <div class="flex items-center gap-3">
+      <button onclick="fetchDetails()" class="bg-pink-600 hover:bg-pink-500 text-white font-bold px-5 py-2.5 rounded-xl text-xs shadow-lg active:scale-95 transition-all">Retry</button>
+      <button onclick="window.history.back()" class="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold px-4 py-2.5 rounded-xl text-xs active:scale-95 transition-all">Go Back</button>
+    </div>
+  </div>
+
+  <!-- Main Player Container -->
+  <div class="video-container" id="player-container">
+    <video id="video-player" playsinline></video>
+    <iframe id="yt-player" class="hidden" allow="autoplay; fullscreen; encrypted-media" allowfullscreen></iframe>
+
+    <!-- Autoplay Tap Overlay -->
+    <div id="tap-overlay" class="absolute inset-0 hidden flex-col items-center justify-center bg-black/50 z-30 cursor-pointer">
+      <button class="w-20 h-20 rounded-full bg-pink-600 text-white flex items-center justify-center shadow-[0_0_30px_rgba(236,72,153,0.8)] animate-pulse mb-3">
+        <i data-lucide="play" class="w-10 h-10 fill-current translate-x-1"></i>
+      </button>
+      <span class="text-white font-bold text-base drop-shadow-md">Tap to Play Class</span>
+    </div>
+
+    <!-- Controls Overlay -->
+    <div class="controls-overlay" id="controls-overlay">
+      <!-- Top Bar -->
+      <div class="top-bar flex items-center justify-between gap-3">
+        <div class="flex items-center gap-3 min-w-0">
+          <button onclick="window.history.back()" class="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white active:scale-90 transition-all shrink-0">
+            <i data-lucide="arrow-left" class="w-5 h-5"></i>
+          </button>
+          <div class="flex items-center gap-2 min-w-0">
+            <img src="/logo.png" alt="GB STUDY" class="w-7 h-7 rounded-lg shrink-0">
+            <span class="text-xs sm:text-sm font-bold text-white truncate" id="video-title">Lecture Video</span>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2 shrink-0">
+          <button id="btn-notes" class="hidden items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-pink-500/20 text-pink-300 border border-pink-500/40 hover:bg-pink-500/30 transition-all">
+            <i data-lucide="file-text" class="w-3.5 h-3.5"></i>
+            <span>Notes PDF</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Bottom Bar -->
+      <div class="bottom-bar flex flex-col gap-2">
+        <!-- Progress Bar -->
+        <div class="flex items-center gap-3">
+          <span class="text-[11px] font-mono tabular-nums text-zinc-300 w-12 text-right" id="time-current">00:00</span>
+          <input type="range" id="seek-bar" min="0" max="100" value="0">
+          <span class="text-[11px] font-mono tabular-nums text-zinc-400 w-12" id="time-duration">00:00</span>
+        </div>
+
+        <!-- Controls Row -->
+        <div class="flex items-center justify-between gap-4 mt-1">
+          <div class="flex items-center gap-3 sm:gap-4">
+            <button id="btn-play" class="w-10 h-10 rounded-full bg-pink-600 hover:bg-pink-500 text-white flex items-center justify-center active:scale-90 transition-all shadow-md">
+              <i data-lucide="play" id="icon-play" class="w-5 h-5 fill-current translate-x-0.5"></i>
+              <i data-lucide="pause" id="icon-pause" class="w-5 h-5 hidden"></i>
+            </button>
+            <button id="btn-rewind" class="text-white hover:text-pink-400 transition-colors" title="-10s">
+              <i data-lucide="rotate-ccw" class="w-5 h-5"></i>
+            </button>
+            <button id="btn-forward" class="text-white hover:text-pink-400 transition-colors" title="+10s">
+              <i data-lucide="rotate-cw" class="w-5 h-5"></i>
+            </button>
+            <div class="hidden sm:flex items-center gap-2">
+              <button id="btn-mute" class="text-zinc-300 hover:text-white">
+                <i data-lucide="volume-2" class="w-5 h-5"></i>
+              </button>
+              <input type="range" id="vol-bar" min="0" max="1" step="0.05" value="1" class="w-16">
+            </div>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <div class="relative">
+              <select id="quality-select" class="bg-zinc-900 border border-zinc-700 text-pink-400 text-xs font-bold rounded-lg px-2 py-1 outline-none cursor-pointer">
+                <option value="auto">Auto Quality</option>
+              </select>
+            </div>
+            <div class="relative">
+              <select id="speed-select" class="bg-zinc-900 border border-zinc-700 text-zinc-300 text-xs font-bold rounded-lg px-2 py-1 outline-none cursor-pointer">
+                <option value="0.75">0.75x</option>
+                <option value="1" selected>1x Speed</option>
+                <option value="1.25">1.25x</option>
+                <option value="1.5">1.5x</option>
+                <option value="2">2x</option>
+              </select>
+            </div>
+            <button id="btn-fullscreen" class="text-white hover:text-pink-400 transition-colors" title="Fullscreen">
+              <i data-lucide="maximize" class="w-5 h-5"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    lucide.createIcons();
+    const params = new URLSearchParams(window.location.search);
+    const courseId = params.get('course_id') || params.get('courseid');
+    const videoId = params.get('video_id') || params.get('videoid');
+
+    const video = document.getElementById('video-player');
+    const ytPlayer = document.getElementById('yt-player');
+    const loader = document.getElementById('loader');
+    const errorScreen = document.getElementById('error-screen');
+    const tapOverlay = document.getElementById('tap-overlay');
+    const overlay = document.getElementById('controls-overlay');
+    const btnPlay = document.getElementById('btn-play');
+    const iconPlay = document.getElementById('icon-play');
+    const iconPause = document.getElementById('icon-pause');
+    const seekBar = document.getElementById('seek-bar');
+    const timeCurrent = document.getElementById('time-current');
+    const timeDuration = document.getElementById('time-duration');
+    const qualitySelect = document.getElementById('quality-select');
+    const speedSelect = document.getElementById('speed-select');
+    const btnNotes = document.getElementById('btn-notes');
+
+    let hls = null;
+    let videoData = null;
+    let controlsTimeout = null;
+
+    function formatTime(secs) {
+      if (isNaN(secs) || secs < 0) return '00:00';
+      const m = Math.floor(secs / 60);
+      const s = Math.floor(secs % 60);
+      return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
+    }
+
+    function showControls() {
+      overlay.classList.remove('hide');
+      if (controlsTimeout) clearTimeout(controlsTimeout);
+      controlsTimeout = setTimeout(() => {
+        if (!video.paused) overlay.classList.add('hide');
+      }, 3500);
+    }
+
+    document.getElementById('player-container').addEventListener('mousemove', showControls);
+    document.getElementById('player-container').addEventListener('click', () => {
+      showControls();
+    });
+
+    async function fetchDetails() {
+      if (!courseId || !videoId) {
+        showError("Invalid lecture link. Course ID and Video ID are required.");
+        return;
+      }
+      loader.classList.remove('hidden');
+      errorScreen.classList.add('hidden');
+
+      try {
+        const res = await fetch(`/api/course/video-details?course_id=${encodeURIComponent(courseId)}&video_id=${encodeURIComponent(videoId)}`);
+        const data = await res.json();
+        if (!data || !data.success) throw new Error("Could not load video details");
+        videoData = data;
+        renderVideo(data);
+      } catch (err) {
+        showError("Unable to connect to lecture stream. Please check connection and retry.");
+      }
+    }
+
+    function renderVideo(data) {
+      loader.classList.add('hidden');
+      document.getElementById('video-title').innerText = data.title || 'GB STUDY Video Lecture';
+
+      if (data.decoded_pdf_link) {
+        btnNotes.classList.remove('hidden');
+        btnNotes.classList.add('flex');
+        btnNotes.onclick = () => {
+          window.open(`/pdf?url=${encodeURIComponent(data.decoded_pdf_link)}`, '_blank');
+        };
+      }
+
+      // 1. YouTube check
+      let rawLink = data.decoded_video_link || '';
+      if (rawLink && !rawLink.includes('http') && rawLink.length === 11) {
+        video.classList.add('hidden');
+        ytPlayer.classList.remove('hidden');
+        ytPlayer.src = `https://www.youtube.com/embed/${rawLink}?autoplay=1&rel=0`;
+        return;
+      }
+
+      // 2. Qualities setup
+      qualitySelect.innerHTML = '<option value="auto">Auto Quality</option>';
+      if (data.qualities && data.qualities.length > 0) {
+        data.qualities.forEach(q => {
+          const opt = document.createElement('option');
+          opt.value = q.url;
+          opt.innerText = q.quality;
+          qualitySelect.appendChild(opt);
+        });
+      }
+
+      // Pick top quality transcoded url
+      let playUrl = (data.qualities && data.qualities.length > 0) ? data.qualities[0].url : data.decoded_video_link;
+      loadStream(playUrl);
+    }
+
+    function loadStream(url) {
+      if (!url) {
+        showError("No video stream found for this lecture.");
+        return;
+      }
+      if (hls) {
+        hls.destroy();
+        hls = null;
+      }
+
+      const lower = url.toLowerCase();
+      if (lower.includes('.mp4')) {
+        video.src = url;
+        video.play().catch(() => showTapOverlay());
+        return;
+      }
+
+      const proxyUrl = `/api/video?url=${encodeURIComponent(url)}`;
+
+      if (Hls.isSupported()) {
+        hls = new Hls({ enableWorker: true, lowLatencyMode: true });
+        hls.loadSource(proxyUrl);
+        hls.attachMedia(video);
+
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          video.play().catch(() => showTapOverlay());
+        });
+
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (data.fatal) {
+            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+              hls.startLoad();
+            } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+              hls.recoverMediaError();
+            } else {
+              hls.loadSource(url);
+            }
+          }
+        });
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = proxyUrl;
+        video.play().catch(() => showTapOverlay());
+      } else {
+        video.src = url;
+        video.play().catch(() => showTapOverlay());
+      }
+    }
+
+    function showTapOverlay() {
+      tapOverlay.classList.remove('hidden');
+      tapOverlay.classList.add('flex');
+    }
+
+    tapOverlay.onclick = () => {
+      tapOverlay.classList.add('hidden');
+      tapOverlay.classList.remove('flex');
+      video.play();
+    };
+
+    function showError(msg) {
+      loader.classList.add('hidden');
+      errorScreen.classList.remove('hidden');
+      errorScreen.classList.add('flex');
+      document.getElementById('error-desc').innerText = msg;
+    }
+
+    // Controls listeners
+    btnPlay.onclick = () => {
+      if (video.paused) {
+        video.play();
+      } else {
+        video.pause();
+      }
+    };
+
+    video.onplay = () => {
+      iconPlay.classList.add('hidden');
+      iconPause.classList.remove('hidden');
+      tapOverlay.classList.add('hidden');
+    };
+
+    video.onpause = () => {
+      iconPlay.classList.remove('hidden');
+      iconPause.classList.add('hidden');
+    };
+
+    video.ontimeupdate = () => {
+      timeCurrent.innerText = formatTime(video.currentTime);
+      timeDuration.innerText = formatTime(video.duration);
+      if (video.duration) {
+        seekBar.value = (video.currentTime / video.duration) * 100;
+      }
+    };
+
+    seekBar.oninput = (e) => {
+      if (video.duration) {
+        video.currentTime = (e.target.value / 100) * video.duration;
+      }
+    };
+
+    document.getElementById('btn-rewind').onclick = () => {
+      video.currentTime = Math.max(0, video.currentTime - 10);
+    };
+
+    document.getElementById('btn-forward').onclick = () => {
+      video.currentTime = Math.min(video.duration || 0, video.currentTime + 10);
+    };
+
+    document.getElementById('btn-mute').onclick = () => {
+      video.muted = !video.muted;
+    };
+
+    document.getElementById('vol-bar').oninput = (e) => {
+      video.volume = e.target.value;
+      video.muted = (e.target.value === '0');
+    };
+
+    qualitySelect.onchange = (e) => {
+      const selected = e.target.value;
+      if (selected === 'auto') {
+        const top = (videoData.qualities && videoData.qualities.length > 0) ? videoData.qualities[0].url : videoData.decoded_video_link;
+        loadStream(top);
+      } else {
+        loadStream(selected);
+      }
+    };
+
+    speedSelect.onchange = (e) => {
+      video.playbackRate = parseFloat(e.target.value);
+    };
+
+    document.getElementById('btn-fullscreen').onclick = () => {
+      const elem = document.getElementById('player-container');
+      if (!document.fullscreenElement) {
+        elem.requestFullscreen().catch(() => {});
+      } else {
+        document.exitFullscreen().catch(() => {});
+      }
+    };
+
+    // Auto-init
+    fetchDetails();
+  </script>
+</body>
+</html>
